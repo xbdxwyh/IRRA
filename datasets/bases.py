@@ -73,10 +73,12 @@ class ImageTextDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
-        pid, image_id, img_path, caption = self.dataset[index]
+        pid, image_id, img_path, pair_img_path, caption = self.dataset[index]
         img = read_image(img_path)
+        pair_img = read_image(pair_img_path)
         if self.transform is not None:
             img = self.transform(img)
+            pair_img = self.transform(pair_img)
 
         tokens = tokenize(caption, tokenizer=self.tokenizer, text_length=self.text_length, truncate=self.truncate)
 
@@ -84,6 +86,7 @@ class ImageTextDataset(Dataset):
             'pids': pid,
             'image_ids': image_id,
             'images': img,
+            'pair_img': pair_img,
             'caption_ids': tokens,
         }
 
@@ -91,20 +94,23 @@ class ImageTextDataset(Dataset):
 
 
 class ImageDataset(Dataset):
-    def __init__(self, image_pids, img_paths, transform=None):
+    def __init__(self, image_pids, img_paths, pair_img_paths, transform=None):
         self.image_pids = image_pids
         self.img_paths = img_paths
+        self.pair_img_paths = pair_img_paths
         self.transform = transform
 
     def __len__(self):
         return len(self.image_pids)
 
     def __getitem__(self, index):
-        pid, img_path = self.image_pids[index], self.img_paths[index]
+        pid, img_path, pair_img_path = self.image_pids[index], self.img_paths[index], self.pair_img_paths[index]
         img = read_image(img_path)
+        pair_img = read_image(pair_img_path)
         if self.transform is not None:
             img = self.transform(img)
-        return pid, img
+            pair_img = self.transform(pair_img)
+        return pid, img, pair_img
 
 
 class TextDataset(Dataset):
@@ -147,10 +153,12 @@ class ImageTextMLMDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
-        pid, image_id, img_path, caption = self.dataset[index]
+        pid, image_id, img_path, pair_img_path, caption = self.dataset[index]
         img = read_image(img_path)
+        pair_img = read_image(pair_img_path)
         if self.transform is not None:
             img = self.transform(img)
+            pair_img = self.transform(pair_img)
         
         caption_tokens = tokenize(caption, tokenizer=self.tokenizer, text_length=self.text_length, truncate=self.truncate)
 
@@ -160,6 +168,7 @@ class ImageTextMLMDataset(Dataset):
             'pids': pid,
             'image_ids': image_id,
             'images': img,
+            'pair_img': pair_img,
             'caption_ids': caption_tokens,
             'mlm_ids': mlm_tokens,
             'mlm_labels': mlm_labels

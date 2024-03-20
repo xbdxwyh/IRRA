@@ -61,10 +61,11 @@ class Evaluator():
         qfeats = torch.cat(qfeats, 0)
 
         # image
-        for pid, img in self.img_loader:
+        for pid, img, img_pair in self.img_loader:
             img = img.to(device)
+            img_pair = img_pair.to(device)
             with torch.no_grad():
-                img_feat = model.encode_image(img)
+                img_feat = model.encode_pair_image(img,img_pair)
             gids.append(pid.view(-1)) # flatten 
             gfeats.append(img_feat)
         gids = torch.cat(gids, 0)

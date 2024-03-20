@@ -13,8 +13,16 @@ from .bases import ImageDataset, TextDataset, ImageTextDataset, ImageTextMLMData
 from .cuhkpedes import CUHKPEDES
 from .icfgpedes import ICFGPEDES
 from .rstpreid import RSTPReid
+from .agtbpr import AG_ReID
 
-__factory = {'CUHK-PEDES': CUHKPEDES, 'ICFG-PEDES': ICFGPEDES, 'RSTPReid': RSTPReid}
+__factory = {
+    'CUHK-PEDES': CUHKPEDES, 
+    'ICFG-PEDES': ICFGPEDES, 
+    'RSTPReid': RSTPReid, 
+    "AGTBPR":AG_ReID,
+    "AGTBPR-g":AG_ReID,
+    "AGTBPR-a":AG_ReID
+    }
 
 
 def build_transforms(img_size=(384, 128), aug=False, is_train=True):
@@ -72,7 +80,7 @@ def build_dataloader(args, tranforms=None):
     logger = logging.getLogger("IRRA.dataset")
 
     num_workers = args.num_workers
-    dataset = __factory[args.dataset_name](root=args.root_dir)
+    dataset = __factory[args.dataset_name](root=args.root_dir,name = args.dataset_name)
     num_classes = len(dataset.train_id_container)
     
     if args.training:
@@ -126,7 +134,7 @@ def build_dataloader(args, tranforms=None):
 
         # use test set as validate set
         ds = dataset.val if args.val_dataset == 'val' else dataset.test
-        val_img_set = ImageDataset(ds['image_pids'], ds['img_paths'],
+        val_img_set = ImageDataset(ds['image_pids'], ds['img_paths'], ds['pair_img_paths'],
                                    val_transforms)
         val_txt_set = TextDataset(ds['caption_pids'],
                                   ds['captions'],
@@ -152,7 +160,7 @@ def build_dataloader(args, tranforms=None):
                                                is_train=False)
 
         ds = dataset.test
-        test_img_set = ImageDataset(ds['image_pids'], ds['img_paths'],
+        test_img_set = ImageDataset(ds['image_pids'], ds['img_paths'], ds['pair_img_paths'],
                                     test_transforms)
         test_txt_set = TextDataset(ds['caption_pids'],
                                    ds['captions'],

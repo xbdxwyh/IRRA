@@ -16,7 +16,7 @@ from utils.metrics import Evaluator
 from utils.options import get_args
 from utils.comm import get_rank, synchronize
 
-
+# pip install ftfy pandas easydict prettytable mat4py tensorboardX transformers timm
 def set_seed(seed=0):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)

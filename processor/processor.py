@@ -4,7 +4,8 @@ import torch
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.comm import get_rank, synchronize
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
+#from torch.utils.tensorboard import SummaryWriter
 from prettytable import PrettyTable
 
 
@@ -26,10 +27,21 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer,
         "loss": AverageMeter(),
         "sdm_loss": AverageMeter(),
         "itc_loss": AverageMeter(),
+        "itc_loss_ff": AverageMeter(),
+        "itc_loss_all": AverageMeter(),
         "id_loss": AverageMeter(),
+        "id_loss_ff": AverageMeter(),
+        "id_loss_all": AverageMeter(),
         "mlm_loss": AverageMeter(),
+        "loss_proj": AverageMeter(),
+        "itc_add_loss": AverageMeter(),
+
         "img_acc": AverageMeter(),
         "txt_acc": AverageMeter(),
+        "img_acc_ff": AverageMeter(),
+        "img_acc_all": AverageMeter(),
+        "img_acc_ff_out": AverageMeter(),
+        "txt_acc_ff": AverageMeter(),
         "mlm_acc": AverageMeter()
     }
 
@@ -54,9 +66,19 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer,
             meters['loss'].update(total_loss.item(), batch_size)
             meters['sdm_loss'].update(ret.get('sdm_loss', 0), batch_size)
             meters['itc_loss'].update(ret.get('itc_loss', 0), batch_size)
+            meters['itc_loss_ff'].update(ret.get('itc_loss_ff', 0), batch_size)
+            meters['itc_loss_all'].update(ret.get('itc_loss_all', 0), batch_size)
             meters['id_loss'].update(ret.get('id_loss', 0), batch_size)
+            meters['id_loss_ff'].update(ret.get('id_loss_ff', 0), batch_size)
+            meters['id_loss_all'].update(ret.get('id_loss_all', 0), batch_size)
             meters['mlm_loss'].update(ret.get('mlm_loss', 0), batch_size)
+            meters['itc_add_loss'].update(ret.get('itc_add_loss', 0), batch_size)
 
+            meters['img_acc_ff'].update(ret.get('img_acc_ff', 0), batch_size)
+            meters['loss_proj'].update(ret.get('loss_proj', 0), batch_size)
+            meters['img_acc_all'].update(ret.get('img_acc_all', 0), batch_size)
+            meters['img_acc_ff_out'].update(ret.get('img_acc_ff_out', 0), batch_size)
+            meters['txt_acc_ff'].update(ret.get('txt_acc_ff', 0), batch_size)
             meters['img_acc'].update(ret.get('img_acc', 0), batch_size)
             meters['txt_acc'].update(ret.get('txt_acc', 0), batch_size)
             meters['mlm_acc'].update(ret.get('mlm_acc', 0), 1)
