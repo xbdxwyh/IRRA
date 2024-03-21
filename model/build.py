@@ -16,7 +16,7 @@ class IRRA(nn.Module):
         super().__init__()
         self.args = args
         self.num_classes = num_classes
-        self.proj_token_num = 16
+        self.proj_token_num = args.proj_token_num
         self._set_task()
 
         self.base_model, base_cfg = build_CLIP_from_openai_pretrained(args.pretrain_choice, args.img_size, args.stride_size)
@@ -165,25 +165,33 @@ class IRRA(nn.Module):
         return x
     
     def encode_pair_image(self, image, image_pair):
+        bs = image.shape[0]
         # x_self = self.base_model.encode_image(image).half()
         x_self_conv = self.base_model.visual.conv_embedding(image.half())
-        x_self = self.base_model.visual.forward_body(x_self_conv)
+        # x_self = self.base_model.visual.forward_body(x_self_conv)
 
         #x_pair = self.base_model.encode_image(image_pair).half()
         x_pair_conv = self.base_model.visual.conv_embedding(image_pair.half())
-        x_pair = self.base_model.visual.forward_body(x_pair_conv)
+        y_gt = self.select_topk_token(x_pair_conv[:,1:,:],x_pair_conv[:, :1, :],self.proj_token_num)
+        # x_pair = self.base_model.visual.forward_body(x_pair_conv)
 
-        bs = x_self.shape[0]
 
-        i_y_feats = x_pair[:, 0, :]
-        sim_tkn = torch.nn.functional.cosine_similarity(i_y_feats.unsqueeze(1),x_pair[:,1:,:],dim=-1)
-        _, idx = torch.sort(sim_tkn,dim=1)
-        y_idx = idx[:,-self.proj_token_num:].reshape(-1)+1
-        x_idx = torch.arange(bs).unsqueeze(0).reshape(-1,1).repeat(1,self.proj_token_num).reshape(-1)
-        y_gt = x_pair[x_idx,y_idx]
+        # i_y_feats = x_pair[:, 0, :]
+        # sim_tkn = torch.nn.functional.cosine_similarity(i_y_feats.unsqueeze(1),x_pair[:,1:,:],dim=-1)
+        # _, idx = torch.sort(sim_tkn,dim=1)
+        # y_idx = idx[:,-self.proj_token_num:].reshape(-1)+1
+        # x_idx = torch.arange(bs).unsqueeze(0).reshape(-1,1).repeat(1,self.proj_token_num).reshape(-1)
+        # y_gt = x_pair[x_idx,y_idx]
 
-        x_add = torch.cat([x_self[:, :1, :],y_gt.reshape(bs,self.proj_token_num,-1),x_self[:, 1:, :]],dim=1)
-        x_add = self.cross_former_mm(x_add,x_add,x_add)
+        x_add = torch.cat([y_gt.reshape(bs,self.proj_token_num,-1),x_self_conv],dim=1)
+        x_add = self.base_model.visual.forward_body(x_add)
+        #i_add = self.proj_head(torch.cat([i_feats.to(i_y_feats.dtype),i_y_feats],dim=-1)).float()
+        # x_add = torch.cat([image_feats[:, :1, :],y_gt.reshape(bs,self.proj_token_num,-1),image_feats[:, 1:, :]],dim=1)
+        # x_add = self.cross_former_mm(x_add,x_add,x_add)
+        # x_add = x_add @ self.base_model.visual.proj
+
+        # x_add = torch.cat([x_self[:, :1, :],y_gt.reshape(bs,self.proj_token_num,-1),x_self[:, 1:, :]],dim=1)
+        # x_add = self.cross_former_mm(x_add,x_add,x_add)
         #x = self.proj_head(x_add[:, 0, :]).float()
         x = (x_add @ self.base_model.visual.proj)[:, 0, :].float()
 
@@ -217,6 +225,38 @@ class IRRA(nn.Module):
 
         return x
         # return x.float() # for CLIP ResNet visual model
+    
+    def select_topk_token(self,feats,cls,k=16,add_cls=False):
+        bs = feats.shape[0]
+
+        sim_tkn = torch.nn.functional.cosine_similarity(cls,feats,dim=-1)
+        _, idx = torch.sort(sim_tkn,dim=1)
+        y_idx = idx[:,-k:].reshape(-1)
+        if add_cls:
+            y_idx += 1
+
+        x_idx = torch.arange(bs).unsqueeze(0).reshape(-1,1).repeat(1,k).reshape(-1)
+        selected = feats[x_idx,y_idx]
+        return selected
+    
+    def forward_proj(self,image_feats):
+        bs = image_feats.shape[0]
+        x = self.cross_former(
+            self.proj_prefix.unsqueeze(0).repeat(bs,1,1).to(image_feats.dtype),
+                image_feats, 
+                image_feats
+            )
+        x_casual = self.proj_dec(
+                inputs_embeds = x,
+                is_casual=True
+            )
+        x_attn = self.proj_dec(
+            inputs_embeds = x,
+            is_casual=False
+        )
+        x_dec = (x_casual[0]+x_attn[0])*0.5
+        return x_dec
+        pass
 
     def encode_text(self, text):
         x = self.base_model.encode_text(text)
@@ -231,30 +271,58 @@ class IRRA(nn.Module):
         images = batch['images']
         bs = images.shape[0]
         caption_ids = batch['caption_ids']
-        
+
         text_feats = self.base_model.encode_text(caption_ids)
+        t_feats = text_feats[torch.arange(text_feats.shape[0]), caption_ids.argmax(dim=-1)].float()
+
         image_feats_conv = self.base_model.visual.conv_embedding(images.half())
 
-        image_feats = self.base_model.visual.forward_body(image_feats_conv)
+        # image_feats = self.base_model.visual.forward_body(image_feats_conv)
         #image_feats, text_feats = self.base_model(images, caption_ids)
         # print(isinstance(self.base_model.visual, VisionTransformer))
         # print(self.base_model.visual)
-        if isinstance(self.base_model.visual, VisionTransformer):
-            i_feats = (image_feats @ self.base_model.visual.proj)[:, 0, :].float()
-        else:
-            i_feats = image_feats.float() # for CLIP ResNet visual model
+        # if isinstance(self.base_model.visual, VisionTransformer):
+        #     i_feats = (image_feats @ self.base_model.visual.proj)[:, 0, :].float()
+        # else:
+        #     i_feats = image_feats.float() # for CLIP ResNet visual model
         
+        if "proj" in self.current_task:
+            x_dec = self.forward_proj(image_feats_conv)
+            x_dec = x_dec.reshape(bs*self.proj_token_num,-1)
 
+            # Select top k token by cosine similarity
+            y_pair = batch['pair_img']
+            # y_pair_feats = self.base_model.encode_image(y_pair)
+            y_pair_feats_conv = self.base_model.visual.conv_embedding(y_pair.half())
+            # y_pair_feats = self.base_model.visual.forward_body(y_pair_feats_conv)
 
+            # i_y_feats = y_pair_feats[:, 0, :]
+            # sim_tkn = torch.nn.functional.cosine_similarity(i_y_feats.unsqueeze(1),y_pair_feats[:,1:,:],dim=-1)
+            # _, idx = torch.sort(sim_tkn,dim=1)
+            # y_idx = idx[:,-self.proj_token_num:].reshape(-1)+1
+            # x_idx = torch.arange(bs).unsqueeze(0).reshape(-1,1).repeat(1,self.proj_token_num).reshape(-1)
+            # y_gt = y_pair_feats[x_idx,y_idx]
+            #####
+            y_gt = self.select_topk_token(y_pair_feats_conv[:,1:,:],y_pair_feats_conv[:, :1, :],self.proj_token_num)
+            # add L1 and L2 Loss
+            
+            loss_proj = torch.nn.functional.l1_loss(x_dec,y_gt) + torch.nn.functional.mse_loss(x_dec,y_gt)
 
-        if 'itc' in self.current_task:
-            ret.update({'itc_loss':objectives.compute_itc(i_feats, t_feats, logit_scale)})
-        
-        if 'sdm' in self.current_task:
-            ret.update({'sdm_loss':objectives.compute_sdm(i_feats, t_feats, batch['pids'], logit_scale)})
+            x_add = torch.cat([y_gt.reshape(bs,self.proj_token_num,-1),image_feats_conv],dim=1).half()
+            # print(image_feats_conv.shape)
+            #print(y_gt.reshape(bs,self.proj_token_num,-1).shape)
+            x_add = self.base_model.visual.forward_body(x_add)
+            #i_add = self.proj_head(torch.cat([i_feats.to(i_y_feats.dtype),i_y_feats],dim=-1)).float()
+            # x_add = torch.cat([image_feats[:, :1, :],y_gt.reshape(bs,self.proj_token_num,-1),image_feats[:, 1:, :]],dim=1)
+            # x_add = self.cross_former_mm(x_add,x_add,x_add)
+            x_add = x_add @ self.base_model.visual.proj
+            #i_add = self.proj_head(x_add[:, 0, :]).float()
+            i_feats = x_add[:, 0, :].float()
 
-        if 'cmpm' in self.current_task:
-            ret.update({'cmpm_loss':objectives.compute_cmpm(i_feats, t_feats, batch['pids'])})
+            # if 'itc' in self.current_task:
+            #     ret.update({'itc_add_loss':objectives.compute_itc(i_add, t_feats, logit_scale)})
+
+            ret.update({'loss_proj':loss_proj})
         
         if 'id' in self.current_task:
             image_logits = self.classifier(i_feats.half()).float()
@@ -268,68 +336,6 @@ class IRRA(nn.Module):
             text_precision = (text_pred == batch['pids']).float().mean()
             ret.update({'img_acc': image_precision})
             ret.update({'txt_acc': text_precision})
-        
-        if 'mlm' in self.current_task:
-            mlm_ids = batch['mlm_ids']
-
-            mlm_feats = self.base_model.encode_text(mlm_ids)
-
-            x = self.cross_former(mlm_feats, image_feats, image_feats)
-
-            x = self.mlm_head(x)  # [batch_size, text_len, num_colors]
-
-            scores = x.float().reshape(-1, self.args.vocab_size)
-            mlm_labels = batch['mlm_labels'].reshape(-1)
-            ret.update({'mlm_loss': objectives.compute_mlm(scores, mlm_labels)*self.args.mlm_loss_weight})
-
-            pred = scores.max(1)[1]
-            mlm_label_idx = torch.nonzero(mlm_labels)
-            acc = (pred[mlm_label_idx] == mlm_labels[mlm_label_idx]).float().mean()
-            ret.update({'mlm_acc': acc})
-        
-        if "proj" in self.current_task:
-            x = self.cross_former(
-                self.proj_prefix.unsqueeze(0).repeat(bs,1,1).to(image_feats.dtype),
-                  image_feats, 
-                  image_feats
-                )
-            x_casual = self.proj_dec(
-                inputs_embeds = x,
-                is_casual=True
-            )
-            x_attn = self.proj_dec(
-                inputs_embeds = x,
-                is_casual=False
-            )
-            x_dec = (x_casual[0]+x_attn[0])*0.5
-
-            # Select top k token by cosine similarity
-            y_pair = batch['pair_img']
-            # y_pair_feats = self.base_model.encode_image(y_pair)
-            y_pair_feats_conv = self.base_model.visual.conv_embedding(y_pair.half())
-            y_pair_feats = self.base_model.visual.forward_body(y_pair_feats_conv)
-
-            i_y_feats = y_pair_feats[:, 0, :]
-            sim_tkn = torch.nn.functional.cosine_similarity(i_y_feats.unsqueeze(1),y_pair_feats[:,1:,:],dim=-1)
-            _, idx = torch.sort(sim_tkn,dim=1)
-            y_idx = idx[:,-self.proj_token_num:].reshape(-1)+1
-            x_idx = torch.arange(bs).unsqueeze(0).reshape(-1,1).repeat(1,self.proj_token_num).reshape(-1)
-            y_gt = y_pair_feats[x_idx,y_idx]
-            # add L1 and L2 Loss
-            x_dec = x_dec.reshape(bs*self.proj_token_num,-1)
-            loss_proj = torch.nn.functional.l1_loss(x_dec,y_gt) + torch.nn.functional.mse_loss(x_dec,y_gt)
-
-            #i_add = self.proj_head(torch.cat([i_feats.to(i_y_feats.dtype),i_y_feats],dim=-1)).float()
-            x_add = torch.cat([image_feats[:, :1, :],y_gt.reshape(bs,self.proj_token_num,-1),image_feats[:, 1:, :]],dim=1)
-            x_add = self.cross_former_mm(x_add,x_add,x_add)
-            x_add = x_add @ self.base_model.visual.proj
-            #i_add = self.proj_head(x_add[:, 0, :]).float()
-            i_add = x_add[:, 0, :].float()
-
-            if 'itc' in self.current_task:
-                ret.update({'itc_add_loss':objectives.compute_itc(i_add, t_feats, logit_scale)})
-
-            ret.update({'loss_proj':loss_proj})
         
         if 'fusion' in self.current_task or 'evafusion' in self.current_task:
             # specific information extractor
@@ -389,6 +395,33 @@ class IRRA(nn.Module):
                     image_precision_all = (image_pred_all == batch['pids']).float().mean()
                     ret.update({'img_acc_all': image_precision_all})
             pass
+
+        if 'itc' in self.current_task:
+            ret.update({'itc_loss':objectives.compute_itc(i_feats, t_feats, logit_scale)})
+        
+        if 'sdm' in self.current_task:
+            ret.update({'sdm_loss':objectives.compute_sdm(i_feats, t_feats, batch['pids'], logit_scale)})
+
+        if 'cmpm' in self.current_task:
+            ret.update({'cmpm_loss':objectives.compute_cmpm(i_feats, t_feats, batch['pids'])})
+        
+        # if 'mlm' in self.current_task:
+        #     mlm_ids = batch['mlm_ids']
+
+        #     mlm_feats = self.base_model.encode_text(mlm_ids)
+
+        #     x = self.cross_former(mlm_feats, image_feats, image_feats)
+
+        #     x = self.mlm_head(x)  # [batch_size, text_len, num_colors]
+
+        #     scores = x.float().reshape(-1, self.args.vocab_size)
+        #     mlm_labels = batch['mlm_labels'].reshape(-1)
+        #     ret.update({'mlm_loss': objectives.compute_mlm(scores, mlm_labels)*self.args.mlm_loss_weight})
+
+        #     pred = scores.max(1)[1]
+        #     mlm_label_idx = torch.nonzero(mlm_labels)
+        #     acc = (pred[mlm_label_idx] == mlm_labels[mlm_label_idx]).float().mean()
+        #     ret.update({'mlm_acc': acc})
 
         return ret
 

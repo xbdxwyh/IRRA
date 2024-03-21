@@ -42,6 +42,7 @@ if __name__ == '__main__':
     
     device = "cuda"
     cur_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    args.proj_token_num = 24
     args.output_dir = op.join(args.output_dir, args.dataset_name, f'{cur_time}_{name}')
     logger = setup_logger('IRRA', save_dir=args.output_dir, if_train=args.training, distributed_rank=get_rank())
     logger.info("Using {} GPUs".format(num_gpus))
@@ -50,6 +51,8 @@ if __name__ == '__main__':
 
     # get image-text pair datasets dataloader
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
+    height = args.proj_token_num // (args.img_size[1]//args.stride_size)
+    args.img_size = (args.img_size[0] + height * args.stride_size, args.img_size[1])
     model = build_model(args, num_classes)
     logger.info('Total params: %2.fM' % (sum(p.numel() for p in model.parameters()) / 1000000.0))
     model.to(device)
